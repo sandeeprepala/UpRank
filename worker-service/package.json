@@ -1,0 +1,16 @@
+{
+  "name": "worker-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "redis": "^4.6.7",
+    "pg": "^8.11.0",
+    "p-retry": "^5.0.0"
+  }
+}
