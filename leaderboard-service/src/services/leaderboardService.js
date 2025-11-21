@@ -6,48 +6,66 @@ function zkey(region) {
 }
 
 async function updateScore({ user_id, name, region, score }) {
-  const key = zkey(region);
-  // Use node-redis zAdd to upsert member
-  await redis.zAdd(key, [{ score: Number(score), value: String(user_id) }]);
-  // Update user hash with latest metadata and score
+  // Update both region and GLOBAL
   const now = new Date().toISOString();
+  const regionKey = zkey(region);
+  const globalKey = zkey('GLOBAL');
+  await redis.zAdd(regionKey, [{ score: Number(score), value: String(user_id) }]);
+  await redis.zAdd(globalKey, [{ score: Number(score), value: String(user_id) }]);
   await redis.hSet(`user:${user_id}`, { name: name || '', region: region || 'GLOBAL', score: String(score), updated_at: now });
-  // produce queue event for worker to persist
   await enqueue({ user_id, name, region, score, timestamp: now });
+  if (region !== 'GLOBAL') {
+    await enqueue({ user_id, name, region: 'GLOBAL', score, timestamp: now });
+  }
   console.log("Updated score for:", user_id);
 }
 
 
 async function createUser({ user_id, name, region, initialScore }) {
-  const key = zkey(region);
-  // Try to add user only if not exists (NX). ZADD returns number of elements added (1 if added, 0 if already present)
-  const added = await redis.zAdd(key, [{ score: Number(initialScore), value: String(user_id) }], { NX: true });
+  // Always add user to both their region and GLOBAL
+  const now = new Date().toISOString();
+  let created = false;
+  let card = null;
 
-  if (added === 1 || added === '1') {
-    // Only set metadata when we actually created the card to avoid overwriting existing users
-    const now = new Date().toISOString();
-    await redis.hSet(`user:${user_id}`, { name: name || '', region: region || 'GLOBAL', score: String(initialScore), updated_at: now });
-    await enqueue({ user_id, name, region, score: initialScore, timestamp: now });
-    return { created: true, card: { user_id: String(user_id), name: name || '', region: region || 'GLOBAL', score: initialScore } };
+  // Add to specific region
+  const regionKey = zkey(region);
+  const addedRegion = await redis.zAdd(regionKey, [{ score: Number(initialScore), value: String(user_id) }], { NX: true });
+  if (addedRegion === 1 || addedRegion === '1') {
+    created = true;
+    card = { user_id: String(user_id), name: name || '', region: region || 'GLOBAL', score: initialScore };
+  }
+  // Add to GLOBAL region
+  const globalKey = zkey('GLOBAL');
+  await redis.zAdd(globalKey, [{ score: Number(initialScore), value: String(user_id) }], { NX: true });
+
+  // Always update user hash (region is user's primary region)
+  await redis.hSet(`user:${user_id}`, { name: name || '', region: region || 'GLOBAL', score: String(initialScore), updated_at: now });
+
+  // Enqueue for both regions
+  await enqueue({ user_id, name, region, score: initialScore, timestamp: now });
+  if (region !== 'GLOBAL') {
+    await enqueue({ user_id, name, region: 'GLOBAL', score: initialScore, timestamp: now });
   }
 
-  // If not added, return the existing card (do not overwrite)
-  const existingScoreStr = await redis.zScore(key, String(user_id));
-  const existingScore = existingScoreStr == null ? 0 : parseInt(existingScoreStr, 10);
-  const existingName = await redis.hGet(`user:${user_id}`, 'name');
-  const existingRegion = await redis.hGet(`user:${user_id}`, 'region');
-  const card = {
-    user_id: String(user_id),
-    name: existingName || name || '',
-    region: existingRegion || region || 'GLOBAL',
-    score: existingScore,
-  };
-  return { created: false, card };
+  if (!created) {
+    // If not added, return the existing card (do not overwrite)
+    const existingScoreStr = await redis.zScore(regionKey, String(user_id));
+    const existingScore = existingScoreStr == null ? 0 : parseInt(existingScoreStr, 10);
+    const existingName = await redis.hGet(`user:${user_id}`, 'name');
+    const existingRegion = await redis.hGet(`user:${user_id}`, 'region');
+    card = {
+      user_id: String(user_id),
+      name: existingName || name || '',
+      region: existingRegion || region || 'GLOBAL',
+      score: existingScore,
+    };
+  }
+  return { created, card };
 }
 
 async function getTop(region, limit = 100) {
   const key = zkey(region);
-  const items = await redis.zRangeWithScores(key, 0, limit - 1);
+  const items = await redis.zRangeWithScores(key, 0, limit - 1, { REV: true });
   const rows = items.map(i => ({ user_id: i.value, score: Number(i.score) }));
   // resolve names from hashes
   for (const r of rows) {
@@ -79,14 +97,17 @@ async function getAround(region, userId, range = 10) {
 }
 
 async function addScore({ user_id, name, region, delta }) {
-  const key = zkey(region);
-  // increment the member score
-  const newScore = await redis.zIncrBy(key, Number(delta), String(user_id));
+  // Increment in both region and GLOBAL
   const now = new Date().toISOString();
-  // update hash with latest score
+  const regionKey = zkey(region);
+  const globalKey = zkey('GLOBAL');
+  const newScore = await redis.zIncrBy(regionKey, Number(delta), String(user_id));
+  await redis.zAdd(globalKey, [{ score: Number(newScore), value: String(user_id) }]);
   await redis.hSet(`user:${user_id}`, { name: name || '', region: region || 'GLOBAL', score: String(newScore), updated_at: now });
-  // enqueue event for worker persistence
   await enqueue({ user_id, name, region, score: Number(newScore), timestamp: now });
+  if (region !== 'GLOBAL') {
+    await enqueue({ user_id, name, region: 'GLOBAL', score: Number(newScore), timestamp: now });
+  }
   return Number(newScore);
 }
 
