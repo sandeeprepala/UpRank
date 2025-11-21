@@ -1,5 +1,6 @@
 import redis from '../redisClient.js';
 import { enqueue } from '../queue/producer.js';
+import pool from '../db.js';
 
 function zkey(region) {
   return `leaderboard:${region || 'GLOBAL'}`;
@@ -67,9 +68,16 @@ async function getTop(region, limit = 100) {
   const key = zkey(region);
   const items = await redis.zRangeWithScores(key, 0, limit - 1, { REV: true });
   const rows = items.map(i => ({ user_id: i.value, score: Number(i.score) }));
-  // resolve names from hashes
   for (const r of rows) {
-    const name = await redis.hGet(`user:${r.user_id}`, 'name');
+    let name = await redis.hGet(`user:${r.user_id}`, 'name');
+    if (!name) {
+      // Try to fetch from DB if missing
+      const { rows: dbRows } = await pool.query('SELECT name FROM leaderboard WHERE user_id = $1', [r.user_id]);
+      if (dbRows.length > 0) {
+        name = dbRows[0].name;
+        await redis.hSet(`user:${r.user_id}`, { name });
+      }
+    }
     r.name = name || null;
   }
   return rows;
@@ -77,22 +85,59 @@ async function getTop(region, limit = 100) {
 
 async function getRank(region, userId) {
   const key = zkey(region);
-  const score = await redis.zScore(key, String(userId));
-  if (score == null) return { found: false };
+  let score = await redis.zScore(key, String(userId));
+  let name = await redis.hGet(`user:${userId}`, 'name');
+  if (score == null || !name) {
+    // Try to fetch from DB if missing
+    const { rows: dbRows } = await pool.query('SELECT score, name FROM leaderboard WHERE user_id = $1', [userId]);
+    if (dbRows.length > 0) {
+      if (score == null) {
+        score = dbRows[0].score;
+        await redis.zAdd(key, [{ score: Number(score), value: String(userId) }]);
+      }
+      if (!name) {
+        name = dbRows[0].name;
+        await redis.hSet(`user:${userId}`, { name });
+      }
+    } else {
+      return { found: false };
+    }
+  }
   const rank = await redis.zRevRank(key, String(userId));
-  const name = await redis.hGet(`user:${userId}`, 'name');
   return { found: true, rank: rank + 1, score: Number(score), name };
 }
 
 async function getAround(region, userId, range = 10) {
   const key = zkey(region);
-  const rank = await redis.zRevRank(key, String(userId));
-  if (rank == null) return { found: false };
+  let rank = await redis.zRevRank(key, String(userId));
+  let score = await redis.zScore(key, String(userId));
+  if (rank == null || score == null) {
+    // Try to fetch from DB if missing
+    const { rows: dbRows } = await pool.query('SELECT score FROM leaderboard WHERE user_id = $1', [userId]);
+    if (dbRows.length > 0) {
+      score = dbRows[0].score;
+      await redis.zAdd(key, [{ score: Number(score), value: String(userId) }]);
+      rank = await redis.zRevRank(key, String(userId));
+    } else {
+      return { found: false };
+    }
+  }
   const start = Math.max(0, rank - range);
   const end = rank + range;
   const arr = await redis.zRangeWithScores(key, start, end, { REV: true });
   const rows = arr.map(i => ({ user_id: i.value, score: Number(i.score) }));
-  for (const r of rows) r.name = await redis.hGet(`user:${r.user_id}`, 'name');
+  for (const r of rows) {
+    let name = await redis.hGet(`user:${r.user_id}`, 'name');
+    if (!name) {
+      // Try to fetch from DB if missing
+      const { rows: dbRows } = await pool.query('SELECT name FROM leaderboard WHERE user_id = $1', [r.user_id]);
+      if (dbRows.length > 0) {
+        name = dbRows[0].name;
+        await redis.hSet(`user:${r.user_id}`, { name });
+      }
+    }
+    r.name = name || null;
+  }
   return { found: true, around: rows, centerIndex: rank - start };
 }
 

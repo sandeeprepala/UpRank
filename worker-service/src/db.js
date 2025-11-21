@@ -25,9 +25,11 @@ async function ensureTableExists() {
       score BIGINT NOT NULL DEFAULT 0,
       updated_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_name ON leaderboard(name);
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_region_score ON leaderboard(region, score DESC);
   `;
   await pool.query(create);
-  console.log("Leaderboard table ready");
+  console.log("Leaderboard table and indexes ready");
 }
 
 // Insert OR update 1 row

@@ -31,11 +31,28 @@ This project demonstrates a production-style backend architecture using:
 - Redis LPUSH → Worker BRPOP → Batched Postgres UPSERT.
 - Smooth, non-blocking flow even under heavy traffic.
 
+### 📌 Database-Level Optimizations
+- Indexed queries using `CREATE INDEX` on `user_id`, `region`, and `score DESC` for high-performance lookups.
+- Region + score composite index ensures fast ranked queries during Redis recovery.
+- Write-behind pipeline reduces direct DB writes, preventing bottlenecks under heavy load.
+
+### ⚡ Redis-Level Optimizations
+- Region-based Redis caching (`leaderboard:ASIA`, `leaderboard:EU`, etc.) for targeted read distribution.
+- Global + Regional ZSETs avoid scanning entire data sets, improving query latency.
+- In-memory reads ensure constant-time access for top N, rank, and around-me requests.
+
+### 🔁 Reduced DB Load
+- Most reads served from Redis → drastically cuts down DB traffic.
+- Score updates push to Redis first, then asynchronously synced to Postgres (write-optimized).
+- No repetitive DB queries for ranking since Redis maintains sorted user scores.
+
+
 ### 🧪 Clean API Endpoints
 - Update score
 - Get top N
 - Get user rank
 - Fetch around-me results
+
 
 ---
 
