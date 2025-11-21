@@ -1,4 +1,4 @@
-#🚀📊 Real-Time Leaderboard System
+## 🚀📊 Real-Time Leaderboard System
 
 A fast, scalable leaderboard platform built with smart caching, sharding, and an optimized pipeline to deliver real-time rankings with smooth performance at any scale.
 
