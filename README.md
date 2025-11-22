@@ -18,16 +18,23 @@ This project demonstrates a production-style backend architecture using:
 - Reads are O(log N) and fully in-memory.
 
 ### 🧩 Microservice Architecture
-- **API Gateway** (routing + rate limiting)
-- **Leaderboard Service** (score updates + query endpoints)
-- **Worker Service** (pipeline sync to Postgres)
+
+- **API Gateway**
+  - Handles auth and routing.
+  - Proxies to internal leaderboard service.
+- **Leaderboard Service**
+  - Handles score updates and ranking queries.
+  - Writes to Redis and enqueues events.
+- **Worker Service**
+  - Consumes events from Redis queue.
+  - Persists scores into PostgreSQL (write-behind).
 
 ### 🗄️ Scalable Storage Layer
 - Postgres stores persistent scores.
 - Upsert pipeline ensures eventual consistency.
 - Region-based sharding for distributed load.
 
-### 🔁 Optimized Data Pipeline
+### 🔁 Async Write-Behind Pipeline
 - Redis LPUSH → Worker BRPOP → Batched Postgres UPSERT.
 - Smooth, non-blocking flow even under heavy traffic.
 
@@ -35,11 +42,27 @@ This project demonstrates a production-style backend architecture using:
 - Indexed queries using `CREATE INDEX` on `user_id`, `region`, and `score DESC` for high-performance lookups.
 - Region + score composite index ensures fast ranked queries during Redis recovery.
 - Write-behind pipeline reduces direct DB writes, preventing bottlenecks under heavy load.
+- Introduced database sharding (region-based) to scale Postgres horizontally and support high-throughput leaderboard writes at large user volumes.
 
 ### ⚡ Redis-Level Optimizations
 - Region-based Redis caching (`leaderboard:ASIA`, `leaderboard:EU`, etc.) for targeted read distribution.
 - Global + Regional ZSETs avoid scanning entire data sets, improving query latency.
 - In-memory reads ensure constant-time access for top N, rank, and around-me requests.
+- Future enhancements : Introduce Redis Cluster to distribute leaderboard ZSETs across multiple shards, improving throughput, reducing hotkey pressure, and allowing the system to scale beyond the limits of a single Redis instance.
+
+### 🛡️ Rate Limiting & Backpressure
+
+- **Per-User Rate Limit**:
+  - Implemented as a **token bucket** stored in Redis.
+  - Capacity and refill rate derived from `USER_RATE_LIMIT_COUNT` and `USER_RATE_LIMIT_WINDOW`.
+- **Per-Region Rate Limit**:
+  - Token bucket per region (e.g. `GLOBAL`, `ASIA`) to cap write throughput.
+- **Queue Backpressure**:
+  - Checks `LLEN queue:scores`.
+  - If queue length exceeds `QUEUE_REJECT_LENGTH`, new score writes return `429` with `queue_full`.
+
+All of this helps keep the system stable under heavy traffic.
+
 
 ### 🔁 Reduced DB Load
 - Most reads served from Redis → drastically cuts down DB traffic.
@@ -65,6 +88,38 @@ This project demonstrates a production-style backend architecture using:
 
 This separation enables fast reads (Redis) and durable storage (Postgres), and supports horizontal scaling.
 
+```text
+          ┌───────────┐
+          │   Client   │
+          └──────┬────┘
+                 │ HTTP
+         ┌───────▼──────────────────┐
+         │       API Gateway         │
+         │(Loadbalanding)           │
+         └───────┬──────────────────┘
+                 │
+      ┌──────────▼──────────┐
+      │  Leaderboard Service │
+      │ (Redis + Queue Push) │
+      └──────────┬──────────┘
+                 │
+            ZADD / ZRANGE
+                 │
+        ┌────────▼────────┐
+        │      Redis       │
+        │ ZSET + LIST      │
+        └────────┬────────┘
+                 │ BRPOP
+       ┌─────────▼─────────┐
+       │   Worker Service   │
+       │ (Postgres UPSERT)  │
+       └─────────┬─────────┘
+                 │
+           ┌─────▼──────┐
+           │  Postgres   │
+           └─────────────┘
+```
+
 ---
 
 **Load Balancer & Scaling Entry Point**
@@ -73,7 +128,7 @@ This separation enables fast reads (Redis) and durable storage (Postgres), and s
 - Scale the `api-gateway` horizontally behind the load balancer. Keep `api-gateway` stateless; store session-like state client-side in JWTs (already implemented) or in a distributed store.
 - For high throughput, enable HTTP/2 and connection reuse at the LB level and tune keep-alive settings.
 
-**Region-Based Sharding (Logical)**
+**Region-Based Sharding**
 
 - This project supports a region-based logical sharding model: each region (e.g., `GLOBAL`, `ASIA`, `EU`, `NA`) maps to its own Redis ZSET namespace, and you can route writes and reads for a user to the shard responsible for their region.
 - Common shard strategies:
@@ -110,8 +165,14 @@ Prerequisites:
 - PostgreSQL (12+)
 - Redis (or Upstash Redis URL)
 - `psql` (optional, for DB checks)
+- NGINX (optional for load-balancing) or Docker (to run NGINX in a container)
 
-1. Clone repository and install per-service dependencies:
+This repository supports two local testing modes:
+
+- Quick mode (no load balancer): run a single `leaderboard-service` instance and send requests directly to its port (good for debugging).
+- LB mode (recommended to mirror production): run three `leaderboard-service` instances and an NGINX load balancer that round‑robins traffic between them.
+
+1) Install dependencies
 
 ```powershell
 cd C:\Users\sande\Desktop\Leaderboard_System\leaderboard-service
@@ -122,37 +183,90 @@ cd ..\worker-service
 npm install
 ```
 
-2. Configure environment variables: copy `.env.example` in each service and set values.
+2) Configure environment variables
+
+Copy `.env.example` into `.env` for each service and set the required values.
 
 Important variables (per service):
 
-- `REDIS_URL` — Redis connection string (Upstash or self-hosted). Example: `redis://127.0.0.1:6379`.
+- `REDIS_URL` — Redis connection string (Upstash or self-hosted). Example: `rediss://:<pwd>@abc.upstash.io:port` for Upstash.
 - `JWT_SECRET` — strong secret used to sign tokens (leaderboard-service).
-- Postgres (worker-service): either `PG_CONNECTION` or the standard `PGUSER`, `PGHOST`, `PGDATABASE`, `PGPORT`, `PGPASSWORD`.
+- Postgres (worker-service): `PGUSER`, `PGHOST`, `PGDATABASE`, `PGPORT`, `PGPASSWORD`.
 
-3. Start services (in separate terminals):
+3) Run services
 
-```powershell
-# Leaderboard service
-cd leaderboard-service
-npm run dev
-
-# Worker service
-cd ..\worker-service
-npm run dev
-
-# API Gateway
-cd ..\api-gateway
-npm run dev
-```
-
-4. Register a user and get a token:
+Quick mode (single instance)
 
 ```powershell
-curl -X POST http://localhost:4000/auth/register -H "Content-Type: application/json" -d "{\"user_id\":\"user-1\",\"name\":\"Alice\",\"region\":\"GLOBAL\"}"
+# run one leaderboard instance for quick tests
+$env:PORT=5001; node src/index.js
+
+# worker (in separate terminal)
+$env:PORT=4001; cd ..\worker-service; npm run dev
 ```
 
-The gateway proxies to the leaderboard service and returns a JSON object with a `token` you can use for authenticated requests.
+LB mode (NGINX load balancer)
+
+1. Start three leaderboard instances (each in its own terminal):
+
+```powershell
+# terminal 1
+$env:PORT=5001; node src/index.js
+
+# terminal 2
+$env:PORT=5002; node src/index.js
+
+# terminal 3
+$env:PORT=5003; node src/index.js
+
+# start the worker in another terminal
+$env:PORT=4001; cd ..\worker-service; npm run dev
+```
+
+2. Start NGINX pointing to the included `nginx.conf` (example file in the repo). Two simple options:
+
+- Native Windows NGINX (if installed):
+
+```powershell
+cd C:\path\to\nginx
+.\nginx.exe -c C:\Users\sande\Desktop\Leaderboard_System\nginx.conf
+```
+
+- Docker (no NGINX install required):
+
+```powershell
+docker run --name up_rank_nginx -p 8080:8080 -v C:\Users\sande\Desktop\Leaderboard_System\nginx.conf:/etc/nginx/nginx.conf:ro -d nginx:1.29
+```
+
+By default the example `nginx.conf` in this repo listens on port `8080` and forwards to the three instances on `5001/5002/5003`.
+
+4) Test with Postman / curl
+
+When using NGINX (LB mode) the public entrypoint is:
+
+```text
+http://localhost:8080
+```
+
+If you ran Quick mode instead, point requests to `http://localhost:5001`.
+
+Register (example):
+
+```powershell
+curl -X POST http://localhost:8080/auth/register -H "Content-Type: application/json" -d '{"user_id":"user-1","name":"Alice","region":"GLOBAL"}'
+```
+
+Login (example):
+
+```powershell
+curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d '{"user_id":"user-1","name":"Alice","region":"GLOBAL"}'
+```
+
+Use the returned JWT as `Authorization: Bearer <token>` for protected endpoints (`/score/create`, `/score/update`, `/score/add`).
+
+If you need to verify which backend served a request, add the `X-Upstream-Addr` header in `nginx.conf` (see README earlier) and reload NGINX; responses will include the upstream address (e.g. `127.0.0.1:5002`).
+
+---
 
 ---
 

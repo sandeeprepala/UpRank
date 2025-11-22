@@ -1,6 +1,6 @@
 import redis from '../redisClient.js';
 import { enqueue } from '../queue/producer.js';
-import pool from '../db.js';
+import { getShard } from '../shardRouter.js';
 
 function zkey(region) {
   return `leaderboard:${region || 'GLOBAL'}`;
@@ -71,11 +71,16 @@ async function getTop(region, limit = 100) {
   for (const r of rows) {
     let name = await redis.hGet(`user:${r.user_id}`, 'name');
     if (!name) {
-      // Try to fetch from DB if missing
-      const { rows: dbRows } = await pool.query('SELECT name FROM leaderboard WHERE user_id = $1', [r.user_id]);
-      if (dbRows.length > 0) {
-        name = dbRows[0].name;
-        await redis.hSet(`user:${r.user_id}`, { name });
+      // Try to fetch from the correct region DB if missing
+      try {
+        const db = getShard(region);
+        const { rows: dbRows } = await db.query('SELECT name FROM leaderboard WHERE user_id = $1', [r.user_id]);
+        if (dbRows.length > 0) {
+          name = dbRows[0].name;
+          await redis.hSet(`user:${r.user_id}`, { name });
+        }
+      } catch (e) {
+        console.error('DB fetch error in getTop:', e && e.message ? e.message : e);
       }
     }
     r.name = name || null;
@@ -88,19 +93,24 @@ async function getRank(region, userId) {
   let score = await redis.zScore(key, String(userId));
   let name = await redis.hGet(`user:${userId}`, 'name');
   if (score == null || !name) {
-    // Try to fetch from DB if missing
-    const { rows: dbRows } = await pool.query('SELECT score, name FROM leaderboard WHERE user_id = $1', [userId]);
-    if (dbRows.length > 0) {
-      if (score == null) {
-        score = dbRows[0].score;
-        await redis.zAdd(key, [{ score: Number(score), value: String(userId) }]);
+    // Try to fetch from DB if missing (use region-specific DB)
+    try {
+      const db = getShard(region);
+      const { rows: dbRows } = await db.query('SELECT score, name FROM leaderboard WHERE user_id = $1', [userId]);
+      if (dbRows.length > 0) {
+        if (score == null) {
+          score = dbRows[0].score;
+          await redis.zAdd(key, [{ score: Number(score), value: String(userId) }]);
+        }
+        if (!name) {
+          name = dbRows[0].name;
+          await redis.hSet(`user:${userId}`, { name });
+        }
+      } else {
+        return { found: false };
       }
-      if (!name) {
-        name = dbRows[0].name;
-        await redis.hSet(`user:${userId}`, { name });
-      }
-    } else {
-      return { found: false };
+    } catch (e) {
+      console.error('DB fetch error in getRank:', e && e.message ? e.message : e);
     }
   }
   const rank = await redis.zRevRank(key, String(userId));
@@ -112,14 +122,19 @@ async function getAround(region, userId, range = 10) {
   let rank = await redis.zRevRank(key, String(userId));
   let score = await redis.zScore(key, String(userId));
   if (rank == null || score == null) {
-    // Try to fetch from DB if missing
-    const { rows: dbRows } = await pool.query('SELECT score FROM leaderboard WHERE user_id = $1', [userId]);
-    if (dbRows.length > 0) {
-      score = dbRows[0].score;
-      await redis.zAdd(key, [{ score: Number(score), value: String(userId) }]);
-      rank = await redis.zRevRank(key, String(userId));
-    } else {
-      return { found: false };
+    // Try to fetch from DB if missing (region-specific DB)
+    try {
+      const db = getShard(region);
+      const { rows: dbRows } = await db.query('SELECT score FROM leaderboard WHERE user_id = $1', [userId]);
+      if (dbRows.length > 0) {
+        score = dbRows[0].score;
+        await redis.zAdd(key, [{ score: Number(score), value: String(userId) }]);
+        rank = await redis.zRevRank(key, String(userId));
+      } else {
+        return { found: false };
+      }
+    } catch (e) {
+      console.error('DB fetch error in getAround:', e && e.message ? e.message : e);
     }
   }
   const start = Math.max(0, rank - range);
@@ -129,11 +144,15 @@ async function getAround(region, userId, range = 10) {
   for (const r of rows) {
     let name = await redis.hGet(`user:${r.user_id}`, 'name');
     if (!name) {
-      // Try to fetch from DB if missing
-      const { rows: dbRows } = await pool.query('SELECT name FROM leaderboard WHERE user_id = $1', [r.user_id]);
-      if (dbRows.length > 0) {
-        name = dbRows[0].name;
-        await redis.hSet(`user:${r.user_id}`, { name });
+      try {
+        const db = getShard(region);
+        const { rows: dbRows } = await db.query('SELECT name FROM leaderboard WHERE user_id = $1', [r.user_id]);
+        if (dbRows.length > 0) {
+          name = dbRows[0].name;
+          await redis.hSet(`user:${r.user_id}`, { name });
+        }
+      } catch (e) {
+        console.error('DB fetch error in getAround name lookup:', e && e.message ? e.message : e);
       }
     }
     r.name = name || null;
