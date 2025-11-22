@@ -2,6 +2,11 @@
 
 A fast, scalable leaderboard platform built with smart caching, sharding, and an optimized pipeline to deliver real-time rankings with smooth performance at any scale.
 
+![Node.js](https://img.shields.io/badge/Node.js-20+-green?logo=node.js)
+![JavaScript](https://img.shields.io/badge/JavaScript-5.0+-blue?logo=javascript)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Live-blue?logo=postgresql)
+![Redis](https://img.shields.io/badge/Redis-Live-red?logo=redis)
+
 This project demonstrates a production-style backend architecture using:
 - Redis (ZSET) for real-time ranking
 - Postgres for durable storage
