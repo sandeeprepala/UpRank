@@ -207,23 +207,39 @@ $env:PORT=4001; cd ..\worker-service; npm run dev
 
 LB mode (NGINX load balancer)
 
-1. Start three leaderboard instances (each in its own terminal):
+In this recommended mode NGINX is the public entrypoint and load-balances to multiple `api-gateway` instances. Each `api-gateway` instance in turn performs round-robin routing to the `leaderboard-service` instances. This gives two-layer L7 load distribution and hides internal services.
+
+1. Start leaderboard-service instances (each in its own terminal):
 
 ```powershell
-# terminal 1
-$env:PORT=5001; node src/index.js
+# leaderboard-service instances
+$env:PORT=5001; node leaderboard-service/src/index.js
 
-# terminal 2
-$env:PORT=5002; node src/index.js
+$env:PORT=5002; node leaderboard-service/src/index.js
 
-# terminal 3
-$env:PORT=5003; node src/index.js
+$env:PORT=5003; node leaderboard-service/src/index.js
 
 # start the worker in another terminal
-$env:PORT=4001; cd ..\worker-service; npm run dev
+$env:PORT=4001; cd worker-service; npm run dev
 ```
 
-2. Start NGINX pointing to the included `nginx.conf` (example file in the repo). Two simple options:
+2. Start multiple API gateway instances (each in its own terminal). The gateway will round-robin requests across configured leaderboard-service upstreams (5001/5002/5003):
+
+```powershell
+# api-gateway instances (gateway will read LEADERBOARD_SERVICE_URLS to pick upstreams)
+$env:LEADERBOARD_SERVICE_URLS='http://localhost:5001,http://localhost:5002,http://localhost:5003'
+
+# terminal A
+$env:PORT=4000; node api-gateway/src/index.js
+
+# terminal B
+$env:PORT=4001; node api-gateway/src/index.js
+
+# terminal C
+$env:PORT=4002; node api-gateway/src/index.js
+```
+
+3. Start NGINX pointing to the included `nginx.conf` which by default forwards to the three API gateway ports (4000/4001/4002). Two options:
 
 - Native Windows NGINX (if installed):
 
@@ -238,7 +254,7 @@ cd C:\path\to\nginx
 docker run --name up_rank_nginx -p 8080:8080 -v C:\Users\sande\Desktop\Leaderboard_System\nginx.conf:/etc/nginx/nginx.conf:ro -d nginx:1.29
 ```
 
-By default the example `nginx.conf` in this repo listens on port `8080` and forwards to the three instances on `5001/5002/5003`.
+By default the example `nginx.conf` in this repo listens on port `8080` and forwards to the three API gateway instances on `4000/4001/4002`.
 
 4) Test with Postman / curl
 
@@ -247,8 +263,6 @@ When using NGINX (LB mode) the public entrypoint is:
 ```text
 http://localhost:8080
 ```
-
-If you ran Quick mode instead, point requests to `http://localhost:5001`.
 
 Register (example):
 
@@ -264,11 +278,32 @@ curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json
 
 Use the returned JWT as `Authorization: Bearer <token>` for protected endpoints (`/score/create`, `/score/update`, `/score/add`).
 
-If you need to verify which backend served a request, add the `X-Upstream-Addr` header in `nginx.conf` (see README earlier) and reload NGINX; responses will include the upstream address (e.g. `127.0.0.1:5002`).
+To verify which component served a request:
+
+- Watch the logs of your API gateway instances — the gateway logs the chosen leaderboard upstream for each proxied request.
+- NGINX adds an `X-Upstream-Addr` response header with the gateway instance address that handled the request (configure `nginx.conf` to include `add_header X-Upstream-Addr $upstream_addr;`).
+
+### API Gateway Load Balancing
+
+The `api-gateway` can also perform simple round-robin load balancing across multiple `leaderboard-service` instances. Use the `LEADERBOARD_SERVICE_URLS` environment variable to list backend URLs (comma-separated). Example:
+
+```powershell
+# set upstreams and start gateway on port 4000
+$env:LEADERBOARD_SERVICE_URLS = 'http://localhost:5001,http://localhost:5002,http://localhost:5003'
+$env:PORT=4000; node api-gateway/src/index.js
+```
+
+- The gateway exposes a `/health` endpoint that returns the configured upstreams and a quick status: `GET /health`.
+- The gateway will round-robin incoming requests across the configured upstreams and logs which upstream handled each request.
+- Use the gateway when you want to hide internal service addresses without installing NGINX; NGINX may still be used in front of multiple gateway instances for higher availability.
+
+Testing notes:
+
+- Send client requests to the gateway (example `http://localhost:4000/auth/register`) or to NGINX if you prefer that entrypoint (`http://localhost:8080`).
+- To verify distribution, watch the gateway logs (each proxied request logs the chosen upstream), or use `X-Upstream-Addr` when proxying through NGINX.
 
 ---
 
----
 
 ## API Reference (quick)
 
