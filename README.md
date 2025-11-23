@@ -163,132 +163,199 @@ Leaderboard_System/
 
 ---
 
-## Getting Started (Local Development)
+## Docker Setup Guide
 
-Prerequisites:
+This repository includes a complete distributed leaderboard system using Docker:
+- PostgreSQL with automatic region database + table creation
+- 3 Leaderboard service instances
+- 3 API Gateway instances (round-robin load balancing)
+- Worker service
+- NGINX reverse proxy on port 8080
 
-- Node.js 18+ (recommended)
-- PostgreSQL (12+)
-- Redis (or Upstash Redis URL)
-- `psql` (optional, for DB checks)
-- NGINX (optional for load-balancing) or Docker (to run NGINX in a container)
+Follow this guide to run the entire system on any machine.
 
-This repository supports two local testing modes:
+---
 
-- Quick mode (no load balancer): run a single `leaderboard-service` instance and send requests directly to its port (good for debugging).
-- LB mode (recommended to mirror production): run three `leaderboard-service` instances and an NGINX load balancer that round‑robins traffic between them.
+## 1. Requirements
 
-1) Install dependencies
+- Docker 20+
+- Docker Compose v2+
+- Git
+- A `.env` file in the project root
 
-```powershell
-cd C:\Users\sande\Desktop\Leaderboard_System\leaderboard-service
-npm install
-cd ..\api-gateway
-npm install
-cd ..\worker-service
-npm install
-```
+---
 
-2) Configure environment variables
+## 2. Create `.env`
 
-Copy `.env.example` into `.env` for each service and set the required values.
-
-Important variables (per service):
-
-- `REDIS_URL` — Redis connection string (Upstash or self-hosted). Example: `rediss://:<pwd>@abc.upstash.io:port` for Upstash.
-- `JWT_SECRET` — strong secret used to sign tokens (leaderboard-service).
-- Postgres (worker-service): `PGUSER`, `PGHOST`, `PGDATABASE`, `PGPORT`, `PGPASSWORD`.
-
-3) Run services
-
-Quick mode (single instance)
-
-```powershell
-# run one leaderboard instance for quick tests
-$env:PORT=5001; node src/index.js
-
-# worker (in separate terminal)
-$env:PORT=4001; cd ..\worker-service; npm run dev
-```
-
-LB mode (NGINX load balancer)
-
-In this recommended mode NGINX is the public entrypoint and load-balances to multiple `api-gateway` instances. Each `api-gateway` instance in turn performs round-robin routing to the `leaderboard-service` instances. This gives two-layer L7 load distribution and hides internal services.
-
-1. Start leaderboard-service instances (each in its own terminal):
-
-```powershell
-# leaderboard-service instances
-$env:PORT=5001; node leaderboard-service/src/index.js
-
-$env:PORT=5002; node leaderboard-service/src/index.js
-
-$env:PORT=5003; node leaderboard-service/src/index.js
-
-# start the worker in another terminal
-$env:PORT=4001; cd worker-service; npm run dev
-```
-
-2. Start multiple API gateway instances (each in its own terminal). The gateway will round-robin requests across configured leaderboard-service upstreams (5001/5002/5003):
-
-```powershell
-# api-gateway instances (gateway will read LEADERBOARD_SERVICE_URLS to pick upstreams)
-$env:LEADERBOARD_SERVICE_URLS='http://localhost:5001,http://localhost:5002,http://localhost:5003'
-
-# terminal A
-$env:PORT=4000; node api-gateway/src/index.js
-
-# terminal B
-$env:PORT=4001; node api-gateway/src/index.js
-
-# terminal C
-$env:PORT=4002; node api-gateway/src/index.js
-```
-
-3. Start NGINX pointing to the included `nginx.conf` which by default forwards to the three API gateway ports (4000/4001/4002). Two options:
-
-- Native Windows NGINX (if installed):
-
-```powershell
-cd C:\path\to\nginx
-.\nginx.exe -c C:\Users\sande\Desktop\Leaderboard_System\nginx.conf
-```
-
-- Docker (no NGINX install required):
-
-```powershell
-docker run --name up_rank_nginx -p 8080:8080 -v C:\Users\sande\Desktop\Leaderboard_System\nginx.conf:/etc/nginx/nginx.conf:ro -d nginx:1.29
-```
-
-By default the example `nginx.conf` in this repo listens on port `8080` and forwards to the three API gateway instances on `4000/4001/4002`.
-
-4) Test with Postman / curl
-
-When using NGINX (LB mode) the public entrypoint is:
+Create a file named `.env` in the project root:
 
 ```text
-http://localhost:8080
+REDIS_URL=YOUR_REDIS_URL
+JWT_SECRET=your-secret-key
 ```
 
-Register (example):
+---
+
+## 3. Project Structure
+
+Your project must contain:
+
+```
+docker-compose.yml
+.env
+postgres-init/
+01-init.sql
+02-create-tables.sql
+```
+
+The `postgres-init` folder is automatically executed by PostgreSQL on first startup.
+
+---
+
+## 4. Build All Services
 
 ```powershell
-curl -X POST http://localhost:8080/auth/register -H "Content-Type: application/json" -d '{"user_id":"user-1","name":"Alice","region":"GLOBAL"}'
+docker compose build --no-cache
 ```
 
-Login (example):
+---
+
+## 5. Start the Entire System
 
 ```powershell
-curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d '{"user_id":"user-1","name":"Alice","region":"GLOBAL"}'
+docker compose up -d
 ```
 
-Use the returned JWT as `Authorization: Bearer <token>` for protected endpoints (`/score/create`, `/score/update`, `/score/add`).
+This starts:
+- Postgres
+- Leaderboard services
+- API Gateways (4000, 4001, 4002)
+- Worker
+- NGINX on port **8080**
 
-To verify which component served a request:
+---
 
-- Watch the logs of your API gateway instances — the gateway logs the chosen leaderboard upstream for each proxied request.
-- NGINX adds an `X-Upstream-Addr` response header with the gateway instance address that handled the request (configure `nginx.conf` to include `add_header X-Upstream-Addr $upstream_addr;`).
+## 6. Verify Postgres Initialization
 
+Enter Postgres:
+
+```powershell
+docker exec -it leaderboard_system-postgres-1 psql -U postgres
+```
+
+List all databases:
+
+```
+\l
+```
+
+You should see:
+
+```
+leaderboard_asia
+leaderboard_eu
+leaderboard_na
+leaderboard_global
+```
+
+Check tables:
+
+```sql
+\c leaderboard_asia
+\dt
+```
+
+---
+
+## 7. Test the System
+
+### PowerShell
+
+```powershell
+Invoke-WebRequest -Uri "http://localhost:8080/score" -Method POST `
+-Headers @{ "Content-Type"="application/json" } `
+-Body '{"user_id":"dev01","region":"ASIA","score":150}'
+```
+
+### Linux/Mac
+
+```bash
+curl -X POST http://localhost:8080/score \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"dev01","region":"ASIA","score":150}'
+```
+
+Check worker logs:
+
+```powershell
+docker logs leaderboard_system-worker-1
+```
+
+---
+
+## 8. Stop Everything
+
+```powershell
+docker compose down
+```
+
+Full reset:
+
+```powershell
+docker compose down -v
+```
+
+---
+
+## 9. Useful Commands
+
+View logs:
+
+```powershell
+docker logs leaderboard_system-api-gateway-1-1
+```
+
+Restart service:
+
+```powershell
+docker compose restart worker
+```
+
+Rebuild one service:
+
+```powershell
+docker compose build leaderboard-1
+```
+
+---
+
+## 10. Troubleshooting
+
+### Postgres DBs not created
+Delete the Docker volume:
+
+```powershell
+docker compose down -v
+docker volume rm leaderboard_system_pgdata
+docker compose up -d
+```
+
+### ENV not detected
+Ensure `.env` is in the project root.
+
+---
+
+## 11. Notes
+
+- Do not rename files inside `postgres-init`.
+- New schema updates should use migration files.
+- Do not commit `.env` to Git.
+
+---
+
+## Done
+
+Your distributed leaderboard cluster should now run identically on any machine.
 ### API Gateway Load Balancing
 
 The `api-gateway` can also perform simple round-robin load balancing across multiple `leaderboard-service` instances. Use the `LEADERBOARD_SERVICE_URLS` environment variable to list backend URLs (comma-separated). Example:
@@ -368,6 +435,30 @@ The worker persists each event with `INSERT ... ON CONFLICT(user_id) DO UPDATE` 
 Each service contains a `Dockerfile`. You can build images per service and run them in containers, wiring them together with Docker Compose (not included) or your orchestration of choice.
 
 ---
+
+## Running the full stack with Docker Compose
+
+The repository includes a `docker-compose.yml` that starts Postgres, three `leaderboard-service` containers, three `api-gateway` containers, the `worker` and NGINX. The stack expects you to provide your Upstash `REDIS_URL` and a `JWT_SECRET` via environment.
+
+1. Create a `.env` file next to `docker-compose.yml` with:
+
+```text
+REDIS_URL=<your-upstash-redis-url>
+JWT_SECRET=supersecret
+```
+
+2. Build and start everything:
+
+```powershell
+docker compose up --build
+```
+
+Notes:
+- NGINX will be available on `http://localhost:8080` and forwards to the three api-gateway containers.
+- The api-gateway containers are exposed on host ports `4000`, `4001`, `4002` for debugging, while the leaderboard containers listen on `5000` internally (gateway talks to them directly).
+- If you prefer scaling differently, you can modify the `docker-compose.yml` to add/remove instances or use `docker compose up --scale` against a single service definition.
+
+If you want, I can also add a small `.env.example` file and a PowerShell script to bring up the stack and tail logs.
 
 ## Helpful Scripts
 

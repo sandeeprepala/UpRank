@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    networks:
+      - uprank-net
+
+  leaderboard-1:
+    build: ./leaderboard-service
+    environment:
+      - PORT=5000
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - PGUSER=${PGUSER:-postgres}
+      - PGHOST=${PGHOST:-postgres}
+      - PGPORT=${PGPORT:-5432}
+      - PGPASSWORD=${PGPASSWORD:-postgres}
+      - PG_DATABASE_ASIA=${PG_DATABASE_ASIA:-leaderboard_asia}
+      - PG_DATABASE_EU=${PG_DATABASE_EU:-leaderboard_eu}
+      - PG_DATABASE_NA=${PG_DATABASE_NA:-leaderboard_na}
+      - PG_DATABASE_GLOBAL=${PG_DATABASE_GLOBAL:-leaderboard_global}
+    depends_on:
+      - postgres
+    networks:
+      - uprank-net
+
+  leaderboard-2:
+    build: ./leaderboard-service
+    environment:
+      - PORT=5000
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - PGUSER=${PGUSER:-postgres}
+      - PGHOST=${PGHOST:-postgres}
+      - PGPORT=${PGPORT:-5432}
+      - PGPASSWORD=${PGPASSWORD:-postgres}
+      - PG_DATABASE_ASIA=${PG_DATABASE_ASIA:-leaderboard_asia}
+      - PG_DATABASE_EU=${PG_DATABASE_EU:-leaderboard_eu}
+      - PG_DATABASE_NA=${PG_DATABASE_NA:-leaderboard_na}
+      - PG_DATABASE_GLOBAL=${PG_DATABASE_GLOBAL:-leaderboard_global}
+    depends_on:
+      - postgres
+    networks:
+      - uprank-net
+
+  leaderboard-3:
+    build: ./leaderboard-service
+    environment:
+      - PORT=5000
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - PGUSER=${PGUSER:-postgres}
+      - PGHOST=${PGHOST:-postgres}
+      - PGPORT=${PGPORT:-5432}
+      - PGPASSWORD=${PGPASSWORD:-postgres}
+      - PG_DATABASE_ASIA=${PG_DATABASE_ASIA:-leaderboard_asia}
+      - PG_DATABASE_EU=${PG_DATABASE_EU:-leaderboard_eu}
+      - PG_DATABASE_NA=${PG_DATABASE_NA:-leaderboard_na}
+      - PG_DATABASE_GLOBAL=${PG_DATABASE_GLOBAL:-leaderboard_global}
+    depends_on:
+      - postgres
+    networks:
+      - uprank-net
+
+  api-gateway-1:
+    build: ./api-gateway
+    environment:
+      - PORT=4000
+      - LEADERBOARD_SERVICE_URLS=http://leaderboard-1:5000,http://leaderboard-2:5000,http://leaderboard-3:5000
+      - REDIS_URL=${REDIS_URL}
+    ports:
+      - "4000:4000"
+    networks:
+      - uprank-net
+
+  api-gateway-2:
+    build: ./api-gateway
+    environment:
+      - PORT=4001
+      - LEADERBOARD_SERVICE_URLS=http://leaderboard-1:5000,http://leaderboard-2:5000,http://leaderboard-3:5000
+      - REDIS_URL=${REDIS_URL}
+    ports:
+      - "4001:4001"
+    networks:
+      - uprank-net
+
+  api-gateway-3:
+    build: ./api-gateway
+    environment:
+      - PORT=4002
+      - LEADERBOARD_SERVICE_URLS=http://leaderboard-1:5000,http://leaderboard-2:5000,http://leaderboard-3:5000
+      - REDIS_URL=${REDIS_URL}
+    ports:
+      - "4002:4002"
+    networks:
+      - uprank-net
+
+  worker:
+    build: ./worker-service
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - PGUSER=${PGUSER:-postgres}
+      - PGHOST=${PGHOST:-postgres}
+      - PGPORT=${PGPORT:-5432}
+      - PGPASSWORD=${PGPASSWORD:-postgres}
+      - PG_DATABASE_ASIA=${PG_DATABASE_ASIA:-leaderboard_asia}
+      - PG_DATABASE_EU=${PG_DATABASE_EU:-leaderboard_eu}
+      - PG_DATABASE_NA=${PG_DATABASE_NA:-leaderboard_na}
+      - PG_DATABASE_GLOBAL=${PG_DATABASE_GLOBAL:-leaderboard_global}
+    depends_on:
+      - postgres
+    networks:
+      - uprank-net
+
+  nginx:
+    image: nginx:1.29
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/docker-nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-gateway-1
+      - api-gateway-2
+      - api-gateway-3
+    networks:
+      - uprank-net
+
+volumes:
+  pgdata:
+
+networks:
+  uprank-net:
+    driver: bridge
