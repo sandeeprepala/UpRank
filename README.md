@@ -1,4 +1,4 @@
-## 🚀📊 Real-Time Leaderboard System
+## 🚀📊 Real-Time Distributed Leaderboard System
 
 ![Node.js](https://img.shields.io/badge/Node.js-20+-green?logo=node.js)
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES9+-blue?logo=javascript)
