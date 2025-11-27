@@ -1,4 +1,4 @@
-## 🚀📊 Real-Time Distributed Leaderboard System
+# 🚀 Real-Time Distributed Leaderboard System
 
 ![Node.js](https://img.shields.io/badge/Node.js-20+-green?logo=node.js)
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES9+-blue?logo=javascript)
@@ -7,92 +7,157 @@
 ![Docker](https://img.shields.io/badge/Docker-Compose-blue?logo=docker)
 ![NGINX](https://img.shields.io/badge/NGINX-Reverse%20Proxy-green?logo=nginx)
 
+A horizontally scalable, production-grade leaderboard platform designed for **real-time rankings**, **high write throughput**, and **low-latency reads**, even under millions of concurrent updates.
 
-A fast, scalable leaderboard platform built with smart caching, sharding, and an optimized pipeline to deliver real-time rankings with smooth performance at any scale.
+This system is built to solve real engineering challenges that occur in high-traffic leaderboard environments:
 
+- Traditional DB sorting becomes too slow.
+- Direct writes to Postgres cause bottlenecks.
+- Global traffic spikes overload single-region setups.
+- User score updates can overload queues/workers.
+- Real-time reads (top N, ranks, around-me) require instant performance.
 
-This project demonstrates a production-style backend architecture using:
-- Redis (ZSET) for real-time ranking
-- Postgres for durable storage
-- A worker pipeline for async write-behind syncing
-- API Gateway + microservices for clean separation
-- Horizontal scalability via sharding & load balancing
-
----
-
-## 🚀Postman Link for API testing after Docker Setup :
-- https://url-shortener-microservices-1.onrender.com/Leaderboard-System-Postman
-
-
-## 🚀 Features
-
-### ⚡ Real-Time Performance
-- Uses Redis Sorted Sets (ZSET) for instant rank updates.
-- Reads are O(log N) and fully in-memory.
-
-### 🧩 Microservice Architecture
-
-- **API Gateway**
-  - Handles auth and routing.
-  - Proxies to internal leaderboard service.
-- **Leaderboard Service**
-  - Handles score updates and ranking queries.
-  - Writes to Redis and enqueues events.
-- **Worker Service**
-  - Consumes events from Redis queue.
-  - Persists scores into PostgreSQL (write-behind).
-
-### 🗄️ Scalable Storage Layer
-- Postgres stores persistent scores.
-- Upsert pipeline ensures eventual consistency.
-- Region-based sharding for distributed load.
-
-### 🔁 Async Write-Behind Pipeline
-- Redis LPUSH → Worker BRPOP → Batched Postgres UPSERT.
-- Smooth, non-blocking flow even under heavy traffic.
-
-### 📌 Database-Level Optimizations
-- Indexed queries using `CREATE INDEX` on `user_id`, `region`, and `score DESC` for high-performance lookups.
-- Region + score composite index ensures fast ranked queries during Redis recovery.
-- Write-behind pipeline reduces direct DB writes, preventing bottlenecks under heavy load.
-- Introduced database sharding (region-based) to scale Postgres horizontally and support high-throughput leaderboard writes at large user volumes.
-
-### ⚡ Redis-Level Optimizations
-- Region-based Redis caching (`leaderboard:ASIA`, `leaderboard:EU`, etc.) for targeted read distribution.
-- Global + Regional ZSETs avoid scanning entire data sets, improving query latency.
-- In-memory reads ensure constant-time access for top N, rank, and around-me requests.
-- Future enhancements : Introduce Redis Cluster to distribute leaderboard ZSETs across multiple shards, improving throughput, reducing hotkey pressure, and allowing the system to scale beyond the limits of a single Redis instance.
-
-### 🛡️ Rate Limiting & Backpressure
-
-- **Per-User Rate Limit**:
-  - Implemented as a **token bucket** stored in Redis.
-  - Capacity and refill rate derived from `USER_RATE_LIMIT_COUNT` and `USER_RATE_LIMIT_WINDOW`.
-- **Per-Region Rate Limit**:
-  - Token bucket per region (e.g. `GLOBAL`, `ASIA`) to cap write throughput.
-- **Queue Backpressure**:
-  - Checks `LLEN queue:scores`.
-  - If queue length exceeds `QUEUE_REJECT_LENGTH`, new score writes return `429` with `queue_full`.
-
-All of this helps keep the system stable under heavy traffic.
-
-
-### 🔁 Reduced DB Load
-- Most reads served from Redis → drastically cuts down DB traffic.
-- Score updates push to Redis first, then asynchronously synced to Postgres (write-optimized).
-- No repetitive DB queries for ranking since Redis maintains sorted user scores.
-
-
-### 🧪 Clean API Endpoints
-- Update score
-- Get top N
-- Get user rank
-- Fetch around-me results
-
+To address these, the system uses a **Redis-first architecture**, combined with **asynchronous write-behind**, **region-based sharding**, and **independent microservices**, ensuring predictable performance under heavy load.
 
 ---
 
-## 🏗️ Architecture Overview
+# 📌 High-Level Features (With Why Each Matters)
+
+## ⚡ Real-Time Performance  
+**Why:**  
+Leaderboard systems receive huge bursts of read traffic. Queries like *“top 100 players”, “player rank”, “around me”* must respond instantly.  
+Database queries with `ORDER BY score DESC` do not scale.
+
+**What this system does:**  
+- Uses Redis Sorted Sets (ZSET) for ranking.
+- O(log N) score updates and rank lookups.
+- Reads never touch Postgres → consistent low latency.
+- Real-time ranking is always available in memory.
+
+---
+
+## 🧩 Microservice Architecture  
+**Why:**  
+Monolithic systems collapse when mixing DB writes, Redis operations, and heavy reads. Microservices allow isolating responsibilities and scaling independently.
+
+**Components:**
+- **API Gateway** – auth, routing, rate-limiting, logging.
+- **Leaderboard Service** – all score and ranking logic.
+- **Worker Service** – async Postgres persistence layer.
+- **Redis** – low-latency ranking engine.
+- **Postgres** – durable backing storage.
+
+This separation increases throughput, resilience, and scalability.
+
+---
+
+## 🗄️ Storage & Scaling Strategy
+
+### PostgreSQL as Durable Storage  
+**Why:**  
+Redis is in-memory and volatile. Long-term analytics, dashboards, anti-cheat systems, or full restores require durable storage.
+
+**What the system does:**  
+- Stores persistent user scores.
+- Uses UPSERT for idempotent writes.
+- Region-based databases reduce write contention.
+
+---
+
+### Region-Based Sharding  
+**Why:**  
+Global systems cannot depend on a single region’s Redis or Postgres:  
+- Latency becomes unpredictable.  
+- Load concentrates unevenly.  
+- Hot shards bring the system down.
+
+**What this system does:**  
+- Creates ZSET per region (`ASIA`, `EU`, `NA`, `GLOBAL`).  
+- Redirects each user to the shard responsible for their region.  
+- Supports future Redis Cluster upgrades.
+
+---
+
+# ⚡ Redis-Level Optimizations  
+**Why:**  
+Redis is the backbone of real-time leaderboard performance. But careless usage can cause:  
+- Hotkey issues  
+- Slow range queries  
+- Excessive memory footprint  
+- Cluster imbalance  
+
+**Optimizations included:**  
+- Region-level key partitioning.  
+- ZSET structure tuned for rank, top N, and around-me queries.  
+- Avoids full data scans entirely.  
+- Ready for Redis Cluster adoption.
+
+---
+
+# 🔁 Asynchronous Write-Behind Pipeline  
+**Why:**  
+Writing directly to Postgres for each score update is fatal at scale:  
+- Transactions block.  
+- Row-level locks build up.  
+- TPS collapses.  
+- Latency spikes propagate to clients.
+
+**What the system does:**  
+- `leaderboard-service` performs **fast writes** to Redis.
+- Pushes events to `queue:scores`.
+- Worker drains queue using `BRPOP` and does **batched UPSERTs**.
+
+This ensures Redis stays fast while Postgres stays healthy.
+
+---
+
+# 🛡️ Rate Limiting & Backpressure  
+**Why:**  
+Uncontrolled clients can spam score updates causing:  
+- Queue overflow  
+- Worker lag  
+- Postgres overload  
+- Full system collapse  
+
+**Mechanisms:**  
+### Per-User Token Bucket  
+Prevents update spam from individual users.
+
+### Per-Region Rate Limit  
+Prevents region-level traffic imbalance.
+
+### Queue Backpressure  
+If queue length exceeds threshold:  
+- 429 Too Many Requests
+The system protects itself before failing.
+
+---
+
+# 🧊 Reduced DB Load  
+**Why:**  
+Postgres cannot serve real-time read queries for millions of users.
+
+**Solution:**  
+- All reads served from Redis.  
+- Postgres only receives batched writes from worker.  
+- No direct DB usage on every score update.
+
+---
+
+# 📡 Clean API Endpoints  
+All critical leaderboard functionality is implemented:
+
+- Register / Login  
+- Update score  
+- Add to score  
+- Get rank  
+- Get top N  
+- Get around-me  
+- JWT-based auth for all score operations.
+
+---
+
+# 🏗 Architecture Overview
 
 1. Client calls `api-gateway` (or directly calls `leaderboard-service`) with a JWT token.
 2. `leaderboard-service` updates the Redis ZSET (leaderboard) and the per-user hash `user:{user_id}` with metadata and `score`.
@@ -137,7 +202,7 @@ This separation enables fast reads (Redis) and durable storage (Postgres), and s
 
 **Load Balancer & Scaling Entry Point**
 
-- A load balancer (L4 or L7) sits in front of the `api-gateway` instances and routes incoming client traffic.
+- A load balancer sits in front of the `api-gateway` instances and routes incoming client traffic.
 - Scale the `api-gateway` horizontally behind the load balancer. Keep `api-gateway` stateless; store session-like state client-side in JWTs (already implemented) or in a distributed store.
 - For high throughput, enable HTTP/2 and connection reuse at the LB level and tune keep-alive settings.
 
