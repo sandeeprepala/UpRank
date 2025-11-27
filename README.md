@@ -80,17 +80,24 @@ Global systems cannot depend on a single region’s Redis or Postgres:
 
 # ⚡ Redis-Level Optimizations  
 **Why:**  
-Redis is the backbone of real-time leaderboard performance. But careless usage can cause:  
-- Hotkey issues  
-- Slow range queries  
-- Excessive memory footprint  
-- Cluster imbalance  
+Redis is the backbone of real-time leaderboard performance, but poorly planned usage can lead to serious scalability issues such as:
+- Hotkey hotspots under heavy traffic  
+- Slow range queries on large ZSETs  
+- High memory consumption for massive leaderboards  
+- Load imbalance when migrating to Redis Cluster  
 
-**Optimizations included:**  
-- Region-level key partitioning.  
-- ZSET structure tuned for rank, top N, and around-me queries.  
-- Avoids full data scans entirely.  
-- Ready for Redis Cluster adoption.
+This project is intentionally architected to avoid those pitfalls and to support seamless scaling later.
+
+**Current Optimizations:**  
+- Logical region-based key separation (`leaderboard:ASIA`, `leaderboard:EU`, etc.) to reduce single-key traffic pressure.  
+- ZSET-based ranking designed specifically for top-N, rank, and around-me queries without full scans.  
+- Minimal cross-key interactions, making all commands Cluster-safe.  
+- Pure Redis-first read path keeps DB load near zero.
+
+**Future-Ready for Sharding:**  
+While the current deployment uses a single Redis instance, the keyspace structure and command patterns are already designed to migrate cleanly to **Redis Cluster** or **manual region-based Redis sharding** in the future.  
+No redesign of ranking logic or API behavior will be required—only the Redis layer will scale horizontally as load grows.
+
 
 ---
 
