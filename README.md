@@ -83,8 +83,7 @@ Global systems cannot depend on a single region’s Redis or Postgres:
 Redis is the backbone of real-time leaderboard performance, but poorly planned usage can lead to serious scalability issues such as:
 - Hotkey hotspots under heavy traffic  
 - Slow range queries on large ZSETs  
-- High memory consumption for massive leaderboards  
-- Load imbalance when migrating to Redis Cluster  
+- High memory consumption for massive leaderboards   
 
 This project is intentionally architected to avoid those pitfalls and to support seamless scaling later.
 
