@@ -18,6 +18,10 @@ services:
     environment:
       - PORT=5000
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - PGUSER=${PGUSER:-postgres}
       - PGHOST=${PGHOST:-postgres}
@@ -37,6 +41,10 @@ services:
     environment:
       - PORT=5000
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - PGUSER=${PGUSER:-postgres}
       - PGHOST=${PGHOST:-postgres}
@@ -56,6 +64,10 @@ services:
     environment:
       - PORT=5000
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - PGUSER=${PGUSER:-postgres}
       - PGHOST=${PGHOST:-postgres}
@@ -76,6 +88,10 @@ services:
       - PORT=4000
       - LEADERBOARD_SERVICE_URLS=http://leaderboard-1:5000,http://leaderboard-2:5000,http://leaderboard-3:5000
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
     ports:
       - "4000:4000"
     networks:
@@ -87,6 +103,10 @@ services:
       - PORT=4001
       - LEADERBOARD_SERVICE_URLS=http://leaderboard-1:5000,http://leaderboard-2:5000,http://leaderboard-3:5000
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
     ports:
       - "4001:4001"
     networks:
@@ -98,6 +118,10 @@ services:
       - PORT=4002
       - LEADERBOARD_SERVICE_URLS=http://leaderboard-1:5000,http://leaderboard-2:5000,http://leaderboard-3:5000
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
     ports:
       - "4002:4002"
     networks:
@@ -107,6 +131,10 @@ services:
     build: ./worker-service
     environment:
       - REDIS_URL=${REDIS_URL}
+      - REDIS_URL_ASIA=${REDIS_URL_ASIA:-${REDIS_URL}}
+      - REDIS_URL_EU=${REDIS_URL_EU:-${REDIS_URL}}
+      - REDIS_URL_NA=${REDIS_URL_NA:-${REDIS_URL}}
+      - REDIS_URL_GLOBAL=${REDIS_URL_GLOBAL:-${REDIS_URL}}
       - JWT_SECRET=${JWT_SECRET}
       - PGUSER=${PGUSER:-postgres}
       - PGHOST=${PGHOST:-postgres}

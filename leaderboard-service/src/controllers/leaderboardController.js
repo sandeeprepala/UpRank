@@ -1,7 +1,7 @@
 import express from 'express';
 const router = express.Router();
-import * as LeaderboardService from '../services/leaderboardService.js';
-import redis from '../redisClient.js';
+import * as LeaderboardService from '../services/leaderboardService2.js';
+import { getClient, getQueueKey } from '../redisClient.js';
 
 // Rate limit configuration (can be overridden with env vars)
 const USER_RATE_LIMIT_COUNT = parseInt(process.env.USER_RATE_LIMIT_COUNT || '5', 10); // per window
@@ -15,7 +15,8 @@ async function checkUserRate(userId) {
   const key = `tb:user:${userId}`;
   const capacity = USER_RATE_LIMIT_COUNT;
   const refillPerSec = USER_RATE_LIMIT_COUNT / Math.max(1, USER_RATE_LIMIT_WINDOW);
-  const { allowed, remaining, retryAfter } = await runTokenBucket(key, capacity, refillPerSec, 1);
+  const client = await getClient('GLOBAL');
+  const { allowed, remaining, retryAfter } = await runTokenBucket(client, key, capacity, refillPerSec, 1);
   return { allowed, remaining, retryAfter };
 }
 
@@ -25,13 +26,17 @@ async function checkRegionRate(region) {
   const key = `tb:region:${r}`;
   const capacity = REGION_RATE_LIMIT_PER_SEC; // allow bursting up to this many
   const refillPerSec = REGION_RATE_LIMIT_PER_SEC; // refill rate (tokens/sec)
-  const { allowed, remaining, retryAfter } = await runTokenBucket(key, capacity, refillPerSec, 1);
+  const client = await getClient(r);
+  const { allowed, remaining, retryAfter } = await runTokenBucket(client, key, capacity, refillPerSec, 1);
   return { allowed, remaining, retryAfter };
 }
 
 async function checkQueueLength() {
   try {
-    return await redis.lLen(QUEUE_KEY);
+    // default to checking the GLOBAL queue length
+    const client = await getClient('GLOBAL');
+    const q = getQueueKey('GLOBAL');
+    return await client.lLen(q);
   } catch (e) {
     return 0;
   }
@@ -71,10 +76,10 @@ end
 return { allowed, tostring(remaining), retry_after }
 `;
 
-async function runTokenBucket(key, capacity, refillPerSec, tokensRequested = 1) {
+async function runTokenBucket(client, key, capacity, refillPerSec, tokensRequested = 1) {
   const now = Date.now();
   try {
-    const res = await redis.eval(TOKEN_BUCKET_LUA, { keys: [key], arguments: [String(capacity), String(refillPerSec), String(tokensRequested), String(now)] });
+    const res = await client.eval(TOKEN_BUCKET_LUA, { keys: [key], arguments: [String(capacity), String(refillPerSec), String(tokensRequested), String(now)] });
     // res is [allowed, remaining, retry_after]
     const allowed = parseInt(res[0], 10) === 1;
     const remaining = parseFloat(res[1]) || 0;

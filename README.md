@@ -95,10 +95,8 @@ This project is intentionally architected to avoid those pitfalls and to support
 - ZSET-based ranking designed specifically for top-N, rank, and around-me queries without full scans.  
 - Minimal cross-key interactions, making all commands Cluster-safe.  
 - Pure Redis-first read path keeps DB load near zero.
-
-**Future-Ready for Sharding:**  
-While the current deployment uses a single Redis instance, the keyspace structure and command patterns are already designed to migrate cleanly to **Redis Cluster** or **manual region-based Redis sharding** in the future.  
-No redesign of ranking logic or API behavior will be required—only the Redis layer will scale horizontally as load grows.
+- Sharded redis zSets region based for fast lookup operations.
+- Used seperate Queues for each redis shard.
 
 
 ---

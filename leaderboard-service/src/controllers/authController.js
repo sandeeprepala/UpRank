@@ -1,8 +1,8 @@
 import express from 'express';
 const router = express.Router();
 import { signToken } from '../utils/jwt.js';
-import * as LeaderboardService from '../services/leaderboardService.js';
-import redis from '../redisClient.js';
+import * as LeaderboardService from '../services/leaderboardService2.js';
+import { getClient, getZKey } from '../redisClient.js';
 import { getShard, shards } from '../shardRouter.js';
 
 // POST /auth/register
@@ -42,10 +42,11 @@ router.post('/login', async (req, res) => {
     if (!user_id || !name || !region) return res.status(400).json({ error: 'invalid_payload', message: 'user_id, name and region are required' });
 
     // Check Redis first in the given region
-    function zkey(r) { return `leaderboard:${r || 'GLOBAL'}`; }
+    function zkey(r) { return getZKey(r); }
     try {
-      const storedName = await redis.hGet(`user:${user_id}`, 'name');
-      const memberScore = await redis.zScore(zkey(region), String(user_id));
+      const client = await getClient(region);
+      const storedName = await client.hGet(`user:${user_id}`, 'name');
+      const memberScore = await client.zScore(zkey(region), String(user_id));
       if (memberScore != null && storedName && String(storedName) === String(name)) {
         // Redis has the user in this region and name matches
         const token = signToken({ user_id: String(user_id), name: String(name), region: String(region) });
@@ -68,10 +69,11 @@ router.post('/login', async (req, res) => {
 
       // Backfill Redis so future logins are fast
       try {
-        await redis.hSet(`user:${user_id}`, { name: dbRow.name, region: region, score: String(dbRow.score), updated_at: new Date().toISOString() });
-        await redis.zAdd(zkey(region), [{ score: Number(dbRow.score), value: String(user_id) }]);
-        // also ensure GLOBAL bookmark exists
-        await redis.zAdd(zkey('GLOBAL'), [{ score: Number(dbRow.score), value: String(user_id) }]);
+        const client = await getClient(region);
+        await client.hSet(`user:${user_id}`, { name: dbRow.name, region: region, score: String(dbRow.score), updated_at: new Date().toISOString() });
+        await client.zAdd(zkey(region), [{ score: Number(dbRow.score), value: String(user_id) }]);
+        const globalClient = await getClient('GLOBAL');
+        await globalClient.zAdd(zkey('GLOBAL'), [{ score: Number(dbRow.score), value: String(user_id) }]);
       } catch (e) {
         console.error('Redis backfill error during login:', e && e.message ? e.message : e);
       }
